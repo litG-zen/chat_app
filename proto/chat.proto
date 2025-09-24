@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package chat;
+option go_package = "github.com/litG-zen/chat_app/proto;chatpb";
+
+message ChatMessage {
+  string id = 1;
+  string user_id = 2;         // sender
+  repeated string to = 3;     // recipients; empty -> broadcast
+  string text = 4;
+  int64 timestamp = 5;
+  MessageType type = 6;
+}
+
+enum MessageType {
+  UNKNOWN = 0;
+  JOIN = 1;
+  LEAVE = 2;
+  MESSAGE = 3;
+  TYPING = 4;
+  PING = 5;
+  PONG = 6;
+}
+
+message IsOnlineRequest {
+  string user_id = 1; // user being queried
+}
+
+message IsOnlineResponse {
+  bool online = 1;
+  // optionally add fields like server_time or node_id if needed
+}
+
+service ChatService {
+  // Bidirectional stream for chat messages
+  rpc Chat(stream ChatMessage) returns (stream ChatMessage);
+
+  // Unary RPC to check if a user is currently registered/online
+  rpc IsOnline(IsOnlineRequest) returns (IsOnlineResponse);
+}

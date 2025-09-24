@@ -1,0 +1,176 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"net"
+	"sync"
+	"time"
+
+	pb "github.com/litG-zen/chat_app/proto"
+	"google.golang.org/grpc"
+)
+
+type Client struct {
+	userID string
+	stream pb.ChatService_ChatServer
+	send   chan *pb.ChatMessage
+	ctx    context.Context
+	cancel context.CancelFunc
+	// lastSeen time.Time // optional
+}
+
+type Hub struct {
+	mu      sync.RWMutex
+	clients map[string]*Client
+}
+
+func NewHub() *Hub {
+	return &Hub{
+		clients: make(map[string]*Client),
+	}
+}
+
+func (h *Hub) Register(c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clients[c.userID] = c
+}
+
+func (h *Hub) Unregister(userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if c, ok := h.clients[userID]; ok {
+		close(c.send)
+		delete(h.clients, userID)
+	}
+}
+
+func (h *Hub) IsOnline(userID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.clients[userID]
+	return ok
+}
+
+// deliver to specific users (non-blocking)
+func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, uid := range recipients {
+		if c, ok := h.clients[uid]; ok {
+			select {
+			case c.send <- msg:
+			default:
+				log.Printf("dropping message for %s (send buffer full)", uid)
+			}
+		} else {
+			log.Printf("user %s offline; message should be persisted (not implemented)", uid)
+		}
+	}
+}
+
+type Server struct {
+	pb.UnimplementedChatServiceServer
+	hub *Hub
+}
+
+func NewServer() *Server {
+	return &Server{hub: NewHub()}
+}
+
+func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
+	// Expect first message to be JOIN with user_id
+	firstMsg, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if firstMsg.Type != pb.MessageType_JOIN || firstMsg.UserId == "" {
+		return errors.New("first message must be JOIN with user_id")
+	}
+	userID := firstMsg.UserId
+
+	ctx, cancel := context.WithCancel(stream.Context())
+	client := &Client{
+		userID: userID,
+		stream: stream,
+		send:   make(chan *pb.ChatMessage, 64),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	s.hub.Register(client)
+	log.Printf("user %s joined", userID)
+
+	// writer goroutine
+	go func() {
+		for {
+			select {
+			case <-client.ctx.Done():
+				return
+			case msg, ok := <-client.send:
+				if !ok {
+					return
+				}
+				if err := stream.Send(msg); err != nil {
+					log.Printf("send error to %s: %v", client.userID, err)
+					return
+				}
+			}
+		}
+	}()
+
+	// read loop
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			log.Printf("recv error for %s: %v", userID, err)
+			break
+		}
+
+		if msg.Timestamp == 0 {
+			msg.Timestamp = time.Now().UnixNano() / int64(time.Millisecond)
+		}
+
+		switch msg.Type {
+		case pb.MessageType_MESSAGE:
+			if len(msg.To) == 0 {
+				// broadcast (not used for direct chats but kept for completeness)
+				// implement Broadcast similar to earlier example if needed
+				log.Printf("broadcast from %s: %s", userID, msg.Text)
+			} else {
+				// direct message(s)
+				s.hub.SendTo(msg.To, msg)
+			}
+		case pb.MessageType_LEAVE:
+			log.Printf("%s requested leave", userID)
+			goto CLEANUP
+		default:
+			// handle PING/TYPING etc
+		}
+	}
+
+CLEANUP:
+	s.hub.Unregister(userID)
+	cancel()
+	return nil
+}
+
+// Unary RPC to check if a user is online
+func (s *Server) IsOnline(ctx context.Context, req *pb.IsOnlineRequest) (*pb.IsOnlineResponse, error) {
+	online := s.hub.IsOnline(req.UserId)
+	return &pb.IsOnlineResponse{Online: online}, nil
+}
+
+func main() {
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("listen failed: %v", err)
+	}
+	grpcServer := grpc.NewServer() // add interceptors / TLS creds in production
+	pb.RegisterChatServiceServer(grpcServer, NewServer())
+	log.Println("gRPC server listening on :50051")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("serve failed: %v", err)
+	}
+}
