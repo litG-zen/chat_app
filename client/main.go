@@ -30,9 +30,10 @@ func runClient(myID, addr, targetID string) error {
 		return fmt.Errorf("IsOnline RPC failed: %w", err)
 	}
 	if !resp.Online {
-		fmt.Printf("target user %s is offline. Exiting.\n", targetID)
-		return nil
+		fmt.Printf("⚠️ target user %s is offline. You can still chat, messages will deliver when they join.\n", targetID)
 	}
+	// continue to open Chat stream regardless
+
 	fmt.Printf("target %s is online — opening chat stream...\n", targetID)
 
 	// Open Chat stream

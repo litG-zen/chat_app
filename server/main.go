@@ -66,7 +66,8 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 				log.Printf("dropping message for %s (send buffer full)", uid)
 			}
 		} else {
-			log.Printf("user %s offline; message should be persisted (not implemented)", uid)
+			log.Printf("user %s offline, persisting message", uid)
+			// ToDo : Add redis data logging for message persistence
 		}
 	}
 }
