@@ -32,10 +32,14 @@ func NewHub() *Hub {
 	}
 }
 
-func (h *Hub) Register(c *Client) {
+func (h *Hub) Register(c *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if _, ok := h.clients[c.userID]; ok {
+		return false
+	}
 	h.clients[c.userID] = c
+	return true
 }
 
 func (h *Hub) Unregister(userID string) {
@@ -100,7 +104,10 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	s.hub.Register(client)
+	if is_registered := s.hub.Register(client); !is_registered {
+		log.Printf("passed userid is already registered, please use a unique UserID")
+		return errors.New("username already exists, aborting ")
+	}
 	log.Printf("user %s joined", userID)
 
 	// writer goroutine
