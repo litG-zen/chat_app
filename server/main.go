@@ -18,7 +18,6 @@ type Client struct {
 	send   chan *pb.ChatMessage
 	ctx    context.Context
 	cancel context.CancelFunc
-	// lastSeen time.Time // optional
 }
 
 type Hub struct {
@@ -72,6 +71,20 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 	}
 }
 
+// Broadcast sends msg to all connected clients (non-blocking).
+// It will attempt a non-blocking send to each client's send channel.
+func (h *Hub) Broadcast(msg *pb.ChatMessage) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for uid, c := range h.clients {
+		select {
+		case c.send <- msg:
+		default:
+			log.Printf("dropping broadcast message for %s (send buffer full)", uid)
+		}
+	}
+}
+
 type Server struct {
 	pb.UnimplementedChatServiceServer
 	hub *Hub
@@ -79,6 +92,15 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{hub: NewHub()}
+}
+
+func containsStar(recipients []string) bool {
+	for _, r := range recipients {
+		if r == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
@@ -135,10 +157,13 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 
 		switch msg.Type {
 		case pb.MessageType_MESSAGE:
-			if len(msg.To) == 0 {
-				// broadcast (not used for direct chats but kept for completeness)
-				// implement Broadcast similar to earlier example if needed
+			// if To contains "*" -> broadcast
+			if len(msg.To) > 0 && containsStar(msg.To) {
 				log.Printf("broadcast from %s: %s", userID, msg.Text)
+				// ToDO: validate permissions here (e.g., check if user is allowed to broadcast)
+				s.hub.Broadcast(msg)
+			} else if len(msg.To) == 0 {
+				log.Printf("message from %s had no recipients; ignoring", userID)
 			} else {
 				// direct message(s)
 				s.hub.SendTo(msg.To, msg)
