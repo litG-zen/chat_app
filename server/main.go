@@ -35,10 +35,10 @@ func (h *Hub) Register(c *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.clients[c.userID]; ok {
-		return false
+		return true
 	}
 	h.clients[c.userID] = c
-	return true
+	return false
 }
 
 func (h *Hub) Unregister(userID string) {
@@ -71,6 +71,8 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 		} else {
 			log.Printf("user %s offline, persisting message", uid)
 			// ToDo : Add redis data logging for message persistence
+			// Approach 1 : to start maintaing a persistent_messages map against a userid which gets
+			// cleared when the user comes online and messages are delivered from them
 		}
 	}
 }
@@ -126,7 +128,7 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	if is_registered := s.hub.Register(client); !is_registered {
+	if isAlreadYRegistered := s.hub.Register(client); isAlreadYRegistered {
 		log.Printf("passed userid is already registered, please use a unique UserID")
 		return errors.New("username already exists, aborting ")
 	}
