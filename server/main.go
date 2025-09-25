@@ -12,23 +12,38 @@ import (
 	"google.golang.org/grpc"
 )
 
+const SERVER_INIT_LOGO = `-----LIT SERVER INITATTED----`
+
+// New client structure, with request-context and connection-steam variables.
 type Client struct {
-	userID string
-	stream pb.ChatService_ChatServer
-	send   chan *pb.ChatMessage
-	ctx    context.Context
-	cancel context.CancelFunc
+	userID string                    //UniqueIdentifier for the registered client
+	stream pb.ChatService_ChatServer // established gRPC stream connection
+	send   chan *pb.ChatMessage      // message channel to be shared between the connected clients for peer-peer communication
+	ctx    context.Context           // request-context definition
+	cancel context.CancelFunc        // context cancel function initiation
 }
 
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[string]*Client
+	mu      sync.RWMutex       // protects the clients map; ensures thread-safe registration and deregistration of users
+	clients map[string]*Client // map of registered clients.
 }
 
-func NewHub() *Hub {
-	return &Hub{
-		clients: make(map[string]*Client),
-	}
+var (
+	hubInstance    *Hub
+	serverInstance *Server
+	serverOnce     sync.Once
+	once           sync.Once
+)
+
+// Singelton property mimicking.
+// this way we can keep calling NewHub() but it will always return the same hub.
+func GetHub() *Hub {
+	once.Do(func() {
+		hubInstance = &Hub{
+			clients: make(map[string]*Client),
+		}
+	})
+	return hubInstance
 }
 
 func (h *Hub) Register(c *Client) bool {
@@ -96,8 +111,13 @@ type Server struct {
 	hub *Hub
 }
 
-func NewServer() *Server {
-	return &Server{hub: NewHub()}
+func GetServer() *Server {
+	serverOnce.Do(func() {
+		serverInstance = &Server{
+			hub: GetHub(), // singleton hub
+		}
+	})
+	return serverInstance
 }
 
 func containsStar(recipients []string) bool {
@@ -179,6 +199,7 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 			}
 		case pb.MessageType_LEAVE:
 			log.Printf("%s requested leave", userID)
+			// perform post connection closure actions
 			goto CLEANUP
 		default:
 			// handle PING/TYPING etc
@@ -203,8 +224,8 @@ func main() {
 		log.Fatalf("listen failed: %v", err)
 	}
 	grpcServer := grpc.NewServer() // add interceptors / TLS creds in production
-	pb.RegisterChatServiceServer(grpcServer, NewServer())
-	log.Println("gRPC server listening on :50051")
+	pb.RegisterChatServiceServer(grpcServer, GetServer())
+	log.Println(SERVER_INIT_LOGO)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("serve failed: %v", err)
 	}
