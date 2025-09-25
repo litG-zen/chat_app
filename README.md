@@ -34,4 +34,5 @@ Supports **direct messaging** between users and **broadcast messages** to all co
 `Terminal 2` : go run client/main.go USERID2 localhost:50051 USERID1
 
 
-**To become a broadcaster pass the target client userid as ***
+**To become a broadcaster** 
+pass the target client userid as *
