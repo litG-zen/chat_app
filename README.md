@@ -32,3 +32,6 @@ Step 2: Open two terminals
 Terminal 1 : go run client/main.go USERID1 localhost:50051 USERID2
 
 Terminal 2 : go run client/main.go USERID2 localhost:50051 USERID1
+
+
+To become a broadcaster pass the target client userid as *

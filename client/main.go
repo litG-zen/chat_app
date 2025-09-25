@@ -22,17 +22,21 @@ func runClient(myID, addr, targetID string) error {
 
 	client := pb.NewChatServiceClient(conn)
 
-	// First, check if target is online via IsOnline RPC (unary)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	resp, err := client.IsOnline(ctx, &pb.IsOnlineRequest{UserId: targetID})
-	if err != nil {
-		return fmt.Errorf("IsOnline RPC failed: %w", err)
-	}
-	if !resp.Online {
-		fmt.Printf("⚠️ target user %s is offline. You can still chat, messages will deliver when they join.\n", targetID)
-	}
-	// continue to open Chat stream regardless
+	if targetID != "*" {
+		// First, check if target is online via IsOnline RPC (unary)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		resp, err := client.IsOnline(ctx, &pb.IsOnlineRequest{UserId: targetID})
+		if err != nil {
+			return fmt.Errorf("IsOnline RPC failed: %w", err)
+		}
+		if !resp.Online {
+			fmt.Printf("⚠️ target user %s is offline. You can still chat, messages will deliver when they join.\n", targetID)
+		}
+		fmt.Printf("target %s is online — opening chat stream...\n", targetID)
+	} else {
+		fmt.Println("Broadcast mode enabled — messages will be delivered to ALL connected users.")
+	} // continue to open Chat stream regardless
 
 	fmt.Printf("target %s is online — opening chat stream...\n", targetID)
 
@@ -60,13 +64,11 @@ func runClient(myID, addr, targetID string) error {
 				log.Println("stream.Recv error:", err)
 				return
 			}
-			// only print messages that are for me (or broadcasts)
-			// the server already routes direct messages for me only
 			fmt.Printf("\n<< [%s] %s\n> ", in.UserId, in.Text)
 		}
 	}()
 
-	// send loop: read stdin and send messages to target
+	// send loop
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Type messages and press Enter. Ctrl+C to exit.")
 	for {
@@ -76,12 +78,17 @@ func runClient(myID, addr, targetID string) error {
 			log.Println("read error:", err)
 			break
 		}
-		// build message targeted to the recipient
+
+		toField := []string{targetID}
+		if targetID == "*" {
+			toField = []string{"*"}
+		}
+
 		msg := &pb.ChatMessage{
 			UserId:    myID,
-			To:        []string{targetID},
+			To:        toField,
 			Type:      pb.MessageType_MESSAGE,
-			Text:      line[:len(line)-1], // drop newline
+			Text:      line[:len(line)-1],
 			Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
 		}
 		if err := stream.Send(msg); err != nil {
