@@ -4,7 +4,7 @@ A **real-time chat application** built in **Golang** using **gRPC bidirectional 
 Supports **direct messaging** between users and **broadcast messages** to all connected clients.
 
 
-<img width="2880" height="1684" alt="Screenshot 2025-09-26 120624" src="https://github.com/user-attachments/assets/5a1f17e5-9d51-4c14-977b-10ad437a543b" />
+<img width="2878" height="1700" alt="Screenshot 2025-09-26 210639" src="https://github.com/user-attachments/assets/50238f81-59d8-4fad-8280-f5c2c556f039" />
 
 ---
 
