@@ -3,6 +3,9 @@
 A **real-time chat application** built in **Golang** using **gRPC bidirectional streaming** and **Protocol Buffers**.  
 Supports **direct messaging** between users and **broadcast messages** to all connected clients.
 
+
+<img width="2880" height="1684" alt="Screenshot 2025-09-26 120624" src="https://github.com/user-attachments/assets/5a1f17e5-9d51-4c14-977b-10ad437a543b" />
+
 ---
 
 ## ✨ Features
