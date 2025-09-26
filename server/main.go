@@ -107,12 +107,12 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 func (h *Hub) Broadcast(senderID string, msg *pb.ChatMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	log_string := fmt.Sprintf("%v : %v message broadcasted to all users by %v ", time.Now(), msg.Text, senderID)
+	logs.Logger(log_string, false)
+
 	for uid, c := range h.clients {
 		select {
 		case c.send <- msg:
-			log_string := fmt.Sprintf("%v : %v message broadcasted to all users by %v ", time.Now(), c.userID, senderID)
-			logs.Logger(log_string, false)
-
 		default:
 			log.Printf("dropping broadcast message for %s (send buffer full)", uid)
 		}
