@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/litG-zen/chat_app/logs"
 	pb "github.com/litG-zen/chat_app/proto"
 	"google.golang.org/grpc"
 )
@@ -50,9 +52,14 @@ func (h *Hub) Register(c *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.clients[c.userID]; ok {
+		log_string := fmt.Sprintf("%v : %v user already registered into the system", time.Now(), c.userID)
+		logs.Logger(log_string, true)
 		return true
 	}
 	h.clients[c.userID] = c
+	log_string := fmt.Sprintf("%v : %v user registered into the system", time.Now(), c.userID)
+	logs.Logger(log_string, false)
+
 	return false
 }
 
@@ -60,6 +67,9 @@ func (h *Hub) Unregister(userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if c, ok := h.clients[userID]; ok {
+		log_string := fmt.Sprintf("%v : %v user unregistered from the system", time.Now(), c.userID)
+		logs.Logger(log_string, false)
+
 		close(c.send)
 		delete(h.clients, userID)
 	}
@@ -94,12 +104,15 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 
 // Broadcast sends msg to all connected clients (non-blocking).
 // It will attempt a non-blocking send to each client's send channel.
-func (h *Hub) Broadcast(msg *pb.ChatMessage) {
+func (h *Hub) Broadcast(senderID string, msg *pb.ChatMessage) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for uid, c := range h.clients {
 		select {
 		case c.send <- msg:
+			log_string := fmt.Sprintf("%v : %v message broadcasted to all users by %v ", time.Now(), c.userID, senderID)
+			logs.Logger(log_string, false)
+
 		default:
 			log.Printf("dropping broadcast message for %s (send buffer full)", uid)
 		}
@@ -136,6 +149,10 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 		return err
 	}
 	if firstMsg.Type != pb.MessageType_JOIN || firstMsg.UserId == "" {
+
+		log_string := fmt.Sprintf("%v: %v's first message is not of SERVER_JOIN", time.Now(), firstMsg.UserId)
+		logs.Logger(log_string, true)
+
 		return errors.New("first message must be JOIN with user_id")
 	}
 	userID := firstMsg.UserId
@@ -148,8 +165,12 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	if isAlreadYRegistered := s.hub.Register(client); isAlreadYRegistered {
-		log.Printf("passed userid is already registered, please use a unique UserID")
+	if isAlreadyRegistered := s.hub.Register(client); isAlreadyRegistered {
+		log.Printf("%v : passed userid(%v) is already registered, please use a unique UserID", time.Now(), userID)
+
+		log_string := fmt.Sprintf("%v : passed userid(%v) is already registered, please use a unique UserID", time.Now(), userID)
+		logs.Logger(log_string, true)
+
 		return errors.New("username already exists, aborting ")
 	}
 	log.Printf("user %s joined", userID)
@@ -166,6 +187,9 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 				}
 				if err := stream.Send(msg); err != nil {
 					log.Printf("send error to %s: %v", client.userID, err)
+					log_string := fmt.Sprintf("%v : send error to %s: %v", time.Now(), client.userID, err)
+					logs.Logger(log_string, true)
+
 					return
 				}
 			}
@@ -190,7 +214,7 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 			if len(msg.To) > 0 && containsStar(msg.To) {
 				log.Printf("broadcast from %s: %s", userID, msg.Text)
 				// ToDO: validate permissions here (e.g., check if user is allowed to broadcast)
-				s.hub.Broadcast(msg)
+				s.hub.Broadcast(userID, msg)
 			} else if len(msg.To) == 0 {
 				log.Printf("message from %s had no recipients; ignoring", userID)
 			} else {
@@ -208,6 +232,8 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 
 CLEANUP:
 	s.hub.Unregister(userID)
+	log_string := fmt.Sprintf("%v : %v has been unregistered", time.Now(), userID)
+	logs.Logger(log_string, true)
 	cancel()
 	return nil
 }
@@ -226,6 +252,10 @@ func main() {
 	grpcServer := grpc.NewServer() // add interceptors / TLS creds in production
 	pb.RegisterChatServiceServer(grpcServer, GetServer())
 	log.Println(SERVER_INIT_LOGO)
+
+	log_string := fmt.Sprintf("%v : Server Bootup!", time.Now())
+	logs.Logger(log_string, false)
+
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("serve failed: %v", err)
 	}
