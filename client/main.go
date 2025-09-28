@@ -146,6 +146,20 @@ func runClient(myID, rawAddr, targetID string) error {
 	}()
 
 	reader := bufio.NewReader(os.Stdin)
+	/*
+		bufio.NewReader(os.Stdin)
+			What it does:
+				os.Stdin is the standard input stream (usually your keyboard input in a terminal).
+				bufio.NewReader wraps that input stream with a buffered reader.
+				This gives you access to methods like:
+				reader.ReadString('\n') → read input until user presses Enter.
+				reader.ReadBytes(delim) → read until a delimiter.
+				reader.ReadLine() → read one line at a time.
+			Why buffer it?
+				Reading directly from os.Stdin (via os.Stdin.Read) is low-level and not convenient.
+				bufio.Reader adds efficient buffering and utility methods so you don’t have to manually parse bytes.
+				Instead of reading one byte at a time from stdin, it grabs chunks into memory and lets you work line by line, string by string.
+	*/
 	fmt.Println("Type messages and press Enter. Ctrl+C to exit.")
 	for {
 		fmt.Print("> ")
