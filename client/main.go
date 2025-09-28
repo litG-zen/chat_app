@@ -186,8 +186,12 @@ func main() {
 		return
 	}
 
-	myID := os.Args[1]
-	addr := os.Args[2]
+	myID := os.Args[1] // SenderID
+	addr := os.Args[2] // ServerAddress in IP:Port format
+
+	// If targetID is "*", this client registers as a broadcaster.
+	// The server will relay all messages from this client to all connected clients.
+	// Otherwise, messages are directed only to the specified targetID.
 	targetID := os.Args[3]
 
 	if err := runClient(myID, addr, targetID); err != nil {
