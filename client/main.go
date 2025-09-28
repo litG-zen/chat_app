@@ -34,6 +34,7 @@ func resolveAddr(input string) (addr string, serverName string, useTLS bool, err
 	input = strings.TrimSpace(input)
 	// if input looks like a URL (has scheme)
 	if strings.Contains(input, "://") {
+		print("Domain name passed")
 		u, perr := url.Parse(input)
 		if perr != nil {
 			return "", "", false, perr
@@ -71,8 +72,8 @@ func resolveAddr(input string) (addr string, serverName string, useTLS bool, err
 		return addr, serverName, useTLS, nil
 	}
 
-	// Otherwise host is a hostname (DNS) -> use TLS and use host as server name
-	useTLS = true
+	// Otherwise host is host:port -> use TLS=false and use host:port as server name
+	useTLS = false
 	serverName = host
 	return addr, serverName, useTLS, nil
 }
@@ -84,6 +85,7 @@ func runClient(myID, rawAddr, targetID string) error {
 	}
 
 	var dialOpts []grpc.DialOption
+
 	if useTLS {
 		// Use system root CAs and verify serverName (SNI)
 		creds := credentials.NewClientTLSFromCert(nil, serverName)
