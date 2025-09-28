@@ -5,68 +5,106 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	pb "github.com/litG-zen/chat_app/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func runClient(myID, addr, targetID string) error {
-	/*
-	 grpc.WithTransportCredentials(insecure.NewCredentials())
-	 - This is a DialOption for grpc.Dial()
-	 - It tells gRPC what kind of transport security (TLS/SSL) to use on the connection.
+// default gRPC port used when user doesn't provide one
+const defaultPort = "50051"
 
-	 insecure.NewCredentials()
-	  - Creates a set of credentials that do not use TLS (no encryption, no certificate verification).
-	*/
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+// resolveAddr accepts many forms and returns an address suitable for grpc.Dial,
+// a serverName for TLS verification (if any), and whether to use TLS.
+// Examples accepted:
+//
+//	"example.com"
+//	"example.com:50051"
+//	"https://example.com"    -> useTLS=true
+//	"http://1.2.3.4:50051"   -> useTLS=false
+//	"1.2.3.4"
+func resolveAddr(input string) (addr string, serverName string, useTLS bool, err error) {
+	// Trim spaces
+	input = strings.TrimSpace(input)
+	// if input looks like a URL (has scheme)
+	if strings.Contains(input, "://") {
+		u, perr := url.Parse(input)
+		if perr != nil {
+			return "", "", false, perr
+		}
+		// some users might pass "https://example.com" (Host will be example.com)
+		host := u.Host
+		if host == "" {
+			// sometimes the host can end up in Path for malformed input
+			host = u.Path
+		}
+		// if host has no port, add default
+		if _, _, splitErr := net.SplitHostPort(host); splitErr != nil {
+			host = net.JoinHostPort(host, defaultPort)
+		}
+		// serverName should be hostname (no port)
+		serverName = u.Hostname()
+		useTLS = strings.EqualFold(u.Scheme, "https")
+		return host, serverName, useTLS, nil
+	}
+
+	// Not a URL - try host:port split
+	host, port, splitErr := net.SplitHostPort(input)
+	if splitErr != nil {
+		// no port present: treat entire input as host and append default port
+		host = input
+		port = defaultPort
+	}
+	addr = net.JoinHostPort(host, port)
+
+	// If host is an IP literal, net.ParseIP returns non-nil
+	if ip := net.ParseIP(host); ip != nil {
+		// IP literal -> default to insecure unless user used URL scheme previously
+		useTLS = false
+		serverName = "" // no SNI verification by default
+		return addr, serverName, useTLS, nil
+	}
+
+	// Otherwise host is a hostname (DNS) -> use TLS and use host as server name
+	useTLS = true
+	serverName = host
+	return addr, serverName, useTLS, nil
+}
+
+func runClient(myID, rawAddr, targetID string) error {
+	addr, serverName, useTLS, err := resolveAddr(rawAddr)
+	if err != nil {
+		return fmt.Errorf("invalid server address %q: %w", rawAddr, err)
+	}
+
+	var dialOpts []grpc.DialOption
+	if useTLS {
+		// Use system root CAs and verify serverName (SNI)
+		creds := credentials.NewClientTLSFromCert(nil, serverName)
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+		log.Printf("Dialing %s with TLS (serverName=%s)", addr, serverName)
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		log.Printf("Dialing %s without TLS (insecure)", addr)
+	}
+
+	conn, err := grpc.Dial(addr, dialOpts...)
 	if err != nil {
 		return err
 	}
-
 	defer conn.Close()
-	// Defer works like finally in Python, the function conn.Close(),
-	// which closes the stream connection gets called when client ends chat.
 
 	client := pb.NewChatServiceClient(conn)
 
 	if targetID != "*" {
-		// First, check if target is online via IsOnline RPC (unary)
-
-		/*
-			Go Context : https://www.youtube.com/watch?v=uiUCIz-3CWM
-			Docs https://pkg.go.dev/context
-
-			context.Background()
-
-				Creates an empty root context.
-
-				Usually used at the “top” of program when no other context exists.
-
-			context.WithTimeout(...)
-
-				Wraps the parent context (Background here).
-
-				Adds a timeout of 5 seconds.
-
-				After 5 seconds, the new context will be automatically canceled
-
-			How it behaves:
-
-			If the work (e.g., a gRPC call, DB query, etc.) finishes within 5 seconds, nothing special happens.
-
-			If it takes longer than 5 seconds, the context becomes “done” → any operation using it should return with context deadline exceeded.
-
-			we can also call cancel() to stop it earlier.
-		*/
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-		defer cancel() //a function call when done early, to free resources.
-
+		defer cancel()
 		resp, err := client.IsOnline(ctx, &pb.IsOnlineRequest{UserId: targetID})
 		if err != nil {
 			return fmt.Errorf("IsOnline RPC failed: %w", err)
@@ -77,9 +115,7 @@ func runClient(myID, addr, targetID string) error {
 		fmt.Printf("target %s is online — opening chat stream...\n", targetID)
 	} else {
 		fmt.Println("Broadcast mode enabled — messages will be delivered to ALL connected users.")
-	} // continue to open Chat stream regardless
-
-	fmt.Printf("target %s is online — opening chat stream...\n", targetID)
+	}
 
 	// Open Chat stream
 	stream, err := client.Chat(context.Background())
@@ -87,12 +123,7 @@ func runClient(myID, addr, targetID string) error {
 		return err
 	}
 
-	// send JOIN message to join the server, before communicating with another  party.
-	// Unlinke rest, where Json data is passed between sender and receiver; gRPC uses protobuf which is in Binary format, much smaller than JSON/XML.
-
-	// Rest uses serialization/deserialization of data for data transformation.
-	// Protobuf uses marshalling/unmarshalling of data for data transformation.
-	join := &pb.ChatMessage{ // protobuf payload definition
+	join := &pb.ChatMessage{
 		UserId:    myID,
 		Type:      pb.MessageType_JOIN,
 		Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
@@ -101,9 +132,6 @@ func runClient(myID, addr, targetID string) error {
 		return fmt.Errorf("failed to send join: %w", err)
 	}
 
-	// StreamMessages continuously listens to incoming messages from the server.
-	// This goroutine ensures that the client can receive messages asynchronously
-	// while still being able to send messages from stdin.
 	go func() {
 		for {
 			in, err := stream.Recv()
@@ -116,34 +144,10 @@ func runClient(myID, addr, targetID string) error {
 	}()
 
 	reader := bufio.NewReader(os.Stdin)
-	/*
-		bufio.NewReader(os.Stdin)
-			What it does:
-
-				os.Stdin is the standard input stream (usually your keyboard input in a terminal).
-
-				bufio.NewReader wraps that input stream with a buffered reader.
-
-				This gives you access to methods like:
-
-				reader.ReadString('\n') → read input until user presses Enter.
-
-				reader.ReadBytes(delim) → read until a delimiter.
-
-				reader.ReadLine() → read one line at a time.
-
-			Why buffer it?
-
-				Reading directly from os.Stdin (via os.Stdin.Read) is low-level and not convenient.
-
-				bufio.Reader adds efficient buffering and utility methods so you don’t have to manually parse bytes.
-
-				Instead of reading one byte at a time from stdin, it grabs chunks into memory and lets you work line by line, string by string.
-	*/
 	fmt.Println("Type messages and press Enter. Ctrl+C to exit.")
 	for {
 		fmt.Print("> ")
-		line, err := reader.ReadString('\n') // separate message on Enter click and send them away to other party.
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			log.Println("read error:", err)
 			break
@@ -154,7 +158,7 @@ func runClient(myID, addr, targetID string) error {
 			toField = []string{"*"}
 		}
 
-		msg := &pb.ChatMessage{ // protobuf payload definition
+		msg := &pb.ChatMessage{
 			UserId:    myID,
 			To:        toField,
 			Type:      pb.MessageType_MESSAGE,
@@ -172,16 +176,16 @@ func runClient(myID, addr, targetID string) error {
 func main() {
 	if len(os.Args) < 4 {
 		fmt.Println("usage: client <myUserID> <serverAddr> <targetUserID>")
-		fmt.Println("example: go run client/main.go alice localhost:50051 bob")
+		fmt.Println("examples:")
+		fmt.Println("  go run client/main.go alice example.com bob")
+		fmt.Println("  go run client/main.go alice example.com:50051 bob")
+		fmt.Println("  go run client/main.go alice https://example.com bob")
+		fmt.Println("  go run client/main.go alice 1.2.3.4:50051 bob")
 		return
 	}
 
-	myID := os.Args[1] // SenderID
-	addr := os.Args[2] // ServerAddress in IP:Port format
-
-	// If targetID is "*", this client registers as a broadcaster.
-	// The server will relay all messages from this client to all connected clients.
-	// Otherwise, messages are directed only to the specified targetID.
+	myID := os.Args[1]
+	addr := os.Args[2]
 	targetID := os.Args[3]
 
 	if err := runClient(myID, addr, targetID); err != nil {
