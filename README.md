@@ -15,7 +15,8 @@ Supports **direct messaging** between users and **broadcast messages** to all co
 - 🟢 **Online Status Check** – verify if a user is online via `IsOnline` RPC.
 - 🔗 **Concurrent Clients** – multiple clients can connect and chat simultaneously.
 - 🛡️ **Extensible Design** – ready for auth, persistence, and scaling with Redis/NATS.
-
+- 📤📥 **Async Commnication**  - communication that happens with independent timing, allowing flexibility and non-blocking interactions.
+- 📡  **Domain Name support** - Chat with a friend far far away, using centralised hosted server and its domain name.
 ---
 
 ## 📦 Tech Stack
