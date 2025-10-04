@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/go-redis/redis/v8"
@@ -12,7 +13,7 @@ import (
 var (
 	redisClient *RedisClient
 	redisOnce   sync.Once
-	REDIS_URL   = "redis://localhost:6379" //os.Getenv("REDIS_URL")
+	REDIS_URL   = os.Getenv("REDIS_URL")
 )
 
 type RedisClient struct {
@@ -88,29 +89,42 @@ func AddMessageForUser(msg RedisMessage) error {
 	return rdb.client.RPush(rdb.ctx, key, jsonMsg).Err()
 }
 
-// FlushMessagesForUser fetches all undelivered messages for a user and deletes the list
+// FlushMessagesForUser fetches all undelivered messages for a user and deletes the list.
+// Returns the slice of messages (may be empty) or an error.
 func FlushMessagesForUser(userID string) ([]RedisMessage, error) {
-
 	rdb, err := GetRedisInstance()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get redis instance: %w", err)
+	}
+	if rdb == nil || rdb.client == nil {
+		return nil, fmt.Errorf("redis client not initialized")
+	}
 
 	key := "undelivered:" + userID
+
+	// fetch all messages
 	msgsJson, err := rdb.client.LRange(rdb.ctx, key, 0, -1).Result()
 	if err != nil {
-		return nil, err
+		// If key does not exist, LRange returns nil slice and nil error, so we typically won't hit this,
+		// but handle any other redis errors here.
+		return nil, fmt.Errorf("failed to lrange key %s: %w", key, err)
 	}
 
 	var msgs []RedisMessage
 	for _, m := range msgsJson {
 		var msg RedisMessage
-		if err := json.Unmarshal([]byte(m), &msg); err == nil {
-			msgs = append(msgs, msg)
+		if err := json.Unmarshal([]byte(m), &msg); err != nil {
+			// skip malformed messages but continue
+			continue
 		}
+		msgs = append(msgs, msg)
 	}
 
-	// Delete the messages after fetching
-	err = rdb.client.Del(rdb.ctx, key).Err()
-	if err != nil {
-		return nil, err
+	// delete the list atomically after reading
+	if err := rdb.client.Del(rdb.ctx, key).Err(); err != nil {
+		// we read the messages successfully — return them but also surface the delete error
+		return msgs, fmt.Errorf("fetched %d messages but failed to delete key %s: %w", len(msgs), key, err)
 	}
+
 	return msgs, nil
 }
