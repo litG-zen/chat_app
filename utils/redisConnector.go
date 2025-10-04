@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/go-redis/redis/v8"
@@ -13,7 +12,7 @@ import (
 var (
 	redisClient *RedisClient
 	redisOnce   sync.Once
-	REDIS_URL   = os.Getenv("REDIS_URL")
+	REDIS_URL   = "redis://localhost:6379" //os.Getenv("REDIS_URL")
 )
 
 type RedisClient struct {
@@ -33,6 +32,7 @@ func (r *RedisClient) initialize() error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
+	fmt.Printf("REDIS_URL :%v", REDIS_URL)
 	if REDIS_URL == "" {
 		return fmt.Errorf("REDIS URL is not defined")
 	}

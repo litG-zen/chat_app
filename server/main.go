@@ -11,6 +11,7 @@ import (
 
 	"github.com/litG-zen/chat_app/logs"
 	pb "github.com/litG-zen/chat_app/proto"
+	"github.com/litG-zen/chat_app/utils"
 	"google.golang.org/grpc"
 )
 
@@ -95,9 +96,16 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 			}
 		} else {
 			log.Printf("user %s offline, persisting message", uid)
-			// ToDo : Add redis data logging for message persistence
-			// Approach 1 : to start maintaing a persistent_messages map against a userid which gets
-			// cleared when the user comes online and messages are delivered from them
+			message := utils.RedisMessage{
+				Sender:    msg.UserId,
+				Receiver:  msg.To[0],
+				Content:   msg.Text,
+				Timestamp: msg.Timestamp,
+			}
+			redis_write_err := utils.AddMessageForUser(message)
+			if redis_write_err != nil {
+				fmt.Errorf("Redis write error %v", redis_write_err)
+			}
 		}
 	}
 }
