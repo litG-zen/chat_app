@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -19,6 +20,13 @@ type RedisClient struct {
 	client *redis.Client
 	ctx    context.Context
 	mutex  sync.RWMutex
+}
+
+type RedisMessage struct {
+	Sender    string `json:"sender"`
+	Receiver  string `json:"receiver"`
+	Content   string `json:"content"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 func (r *RedisClient) initialize() error {
@@ -57,4 +65,52 @@ func NewRedisClient() (*RedisClient, error) {
 		return nil, initErr
 	}
 	return redisClient, nil
+}
+
+func GetRedisInstance() (*RedisClient, error) {
+	if redisClient == nil {
+		return NewRedisClient()
+	}
+	return redisClient, nil
+}
+
+// AddMessageForUser adds a serialized message to the recipient's Redis list
+func AddMessageForUser(msg RedisMessage) error {
+	rdb, err := GetRedisInstance()
+	if err != nil {
+		return fmt.Errorf("Redis connection issue, please check %v", err)
+	}
+	jsonMsg, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	key := "undelivered:" + msg.Receiver
+	return rdb.client.RPush(rdb.ctx, key, jsonMsg).Err()
+}
+
+// FlushMessagesForUser fetches all undelivered messages for a user and deletes the list
+func FlushMessagesForUser(userID string) ([]RedisMessage, error) {
+
+	rdb, err := GetRedisInstance()
+
+	key := "undelivered:" + userID
+	msgsJson, err := rdb.client.LRange(rdb.ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var msgs []RedisMessage
+	for _, m := range msgsJson {
+		var msg RedisMessage
+		if err := json.Unmarshal([]byte(m), &msg); err == nil {
+			msgs = append(msgs, msg)
+		}
+	}
+
+	// Delete the messages after fetching
+	err = rdb.client.Del(rdb.ctx, key).Err()
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
 }
