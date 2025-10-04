@@ -11,6 +11,7 @@ import (
 
 	"github.com/litG-zen/chat_app/logs"
 	pb "github.com/litG-zen/chat_app/proto"
+	"github.com/litG-zen/chat_app/utils"
 	"google.golang.org/grpc"
 )
 
@@ -95,9 +96,16 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 			}
 		} else {
 			log.Printf("user %s offline, persisting message", uid)
-			// ToDo : Add redis data logging for message persistence
-			// Approach 1 : to start maintaing a persistent_messages map against a userid which gets
-			// cleared when the user comes online and messages are delivered from them
+			message := utils.RedisMessage{
+				Sender:    msg.UserId,
+				Receiver:  uid,
+				Content:   msg.Text,
+				Timestamp: msg.Timestamp,
+			}
+			redis_write_err := utils.AddMessageForUser(message)
+			if redis_write_err != nil {
+				fmt.Errorf("Redis write error %v", redis_write_err)
+			}
 		}
 	}
 }
@@ -172,6 +180,39 @@ func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
 		logs.Logger(log_string, true)
 
 		return errors.New("username already exists, aborting ")
+	} else {
+		go func(c *Client) {
+			msgs, err := utils.FlushMessagesForUser(c.userID)
+			if err != nil {
+				// log and continue: we don't want to block connection if flush fails
+				log.Printf("error flushing messages for %s: %v", c.userID, err)
+				logs.Logger(fmt.Sprintf("%v : error flushing messages for %s: %v", time.Now(), c.userID, err), true)
+				return
+			}
+			if len(msgs) == 0 {
+				return
+			}
+
+			log.Printf("delivering %d stored messages to %s", len(msgs), c.userID)
+			for _, rm := range msgs {
+				// construct a pb.ChatMessage so the writer goroutine sends it to the client stream
+				chatMsg := &pb.ChatMessage{
+					Type:      pb.MessageType_MESSAGE,
+					UserId:    rm.Sender,
+					To:        []string{rm.Receiver},
+					Text:      rm.Content,
+					Timestamp: rm.Timestamp,
+				}
+
+				// Non-blocking send into client's buffered channel (to avoid deadlocks)
+				select {
+				case c.send <- chatMsg:
+				default:
+					// client's send buffer is full; log and drop (or handle backpressure differently)
+					log.Printf("dropping persisted message for %s: send buffer full", c.userID)
+				}
+			}
+		}(client)
 	}
 	log.Printf("user %s joined", userID)
 
