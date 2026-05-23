@@ -24,34 +24,49 @@ const (
 type MessageType int32
 
 const (
-	MessageType_UNKNOWN MessageType = 0
-	MessageType_JOIN    MessageType = 1
-	MessageType_LEAVE   MessageType = 2
-	MessageType_MESSAGE MessageType = 3
-	MessageType_TYPING  MessageType = 4
-	MessageType_PING    MessageType = 5
-	MessageType_PONG    MessageType = 6
+	MessageType_UNKNOWN            MessageType = 0
+	MessageType_JOIN               MessageType = 1
+	MessageType_LEAVE              MessageType = 2
+	MessageType_MESSAGE            MessageType = 3
+	MessageType_TYPING             MessageType = 4 // deprecated; superseded by TYPING_START / TYPING_STOP
+	MessageType_PING               MessageType = 5
+	MessageType_PONG               MessageType = 6
+	MessageType_TYPING_START       MessageType = 7  // sender began composing; To = recipients
+	MessageType_TYPING_STOP        MessageType = 8  // sender stopped composing; To = recipients
+	MessageType_PRESENCE_ONLINE    MessageType = 9  // server -> watcher: user_id came online
+	MessageType_PRESENCE_OFFLINE   MessageType = 10 // server -> watcher: user_id went offline
+	MessageType_PRESENCE_SUBSCRIBE MessageType = 11 // client -> server: To = user_ids to watch
 )
 
 // Enum value maps for MessageType.
 var (
 	MessageType_name = map[int32]string{
-		0: "UNKNOWN",
-		1: "JOIN",
-		2: "LEAVE",
-		3: "MESSAGE",
-		4: "TYPING",
-		5: "PING",
-		6: "PONG",
+		0:  "UNKNOWN",
+		1:  "JOIN",
+		2:  "LEAVE",
+		3:  "MESSAGE",
+		4:  "TYPING",
+		5:  "PING",
+		6:  "PONG",
+		7:  "TYPING_START",
+		8:  "TYPING_STOP",
+		9:  "PRESENCE_ONLINE",
+		10: "PRESENCE_OFFLINE",
+		11: "PRESENCE_SUBSCRIBE",
 	}
 	MessageType_value = map[string]int32{
-		"UNKNOWN": 0,
-		"JOIN":    1,
-		"LEAVE":   2,
-		"MESSAGE": 3,
-		"TYPING":  4,
-		"PING":    5,
-		"PONG":    6,
+		"UNKNOWN":            0,
+		"JOIN":               1,
+		"LEAVE":              2,
+		"MESSAGE":            3,
+		"TYPING":             4,
+		"PING":               5,
+		"PONG":               6,
+		"TYPING_START":       7,
+		"TYPING_STOP":        8,
+		"PRESENCE_ONLINE":    9,
+		"PRESENCE_OFFLINE":   10,
+		"PRESENCE_SUBSCRIBE": 11,
 	}
 )
 
@@ -269,7 +284,7 @@ const file_proto_chat_proto_rawDesc = "" +
 	"\x0fIsOnlineRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\"*\n" +
 	"\x10IsOnlineResponse\x12\x16\n" +
-	"\x06online\x18\x01 \x01(\bR\x06online*\\\n" +
+	"\x06online\x18\x01 \x01(\bR\x06online*\xc2\x01\n" +
 	"\vMessageType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\b\n" +
 	"\x04JOIN\x10\x01\x12\t\n" +
@@ -278,7 +293,13 @@ const file_proto_chat_proto_rawDesc = "" +
 	"\n" +
 	"\x06TYPING\x10\x04\x12\b\n" +
 	"\x04PING\x10\x05\x12\b\n" +
-	"\x04PONG\x10\x062z\n" +
+	"\x04PONG\x10\x06\x12\x10\n" +
+	"\fTYPING_START\x10\a\x12\x0f\n" +
+	"\vTYPING_STOP\x10\b\x12\x13\n" +
+	"\x0fPRESENCE_ONLINE\x10\t\x12\x14\n" +
+	"\x10PRESENCE_OFFLINE\x10\n" +
+	"\x12\x16\n" +
+	"\x12PRESENCE_SUBSCRIBE\x10\v2z\n" +
 	"\vChatService\x120\n" +
 	"\x04Chat\x12\x11.chat.ChatMessage\x1a\x11.chat.ChatMessage(\x010\x01\x129\n" +
 	"\bIsOnline\x12\x15.chat.IsOnlineRequest\x1a\x16.chat.IsOnlineResponseB+Z)github.com/litG-zen/chat_app/proto;chatpbb\x06proto3"

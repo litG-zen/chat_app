@@ -17,9 +17,14 @@ enum MessageType {
   JOIN = 1;
   LEAVE = 2;
   MESSAGE = 3;
-  TYPING = 4;
+  TYPING = 4;              // deprecated; superseded by TYPING_START / TYPING_STOP
   PING = 5;
   PONG = 6;
+  TYPING_START = 7;        // sender began composing; To = recipients
+  TYPING_STOP = 8;         // sender stopped composing; To = recipients
+  PRESENCE_ONLINE = 9;     // server -> watcher: user_id came online
+  PRESENCE_OFFLINE = 10;   // server -> watcher: user_id went offline
+  PRESENCE_SUBSCRIBE = 11; // client -> server: To = user_ids to watch
 }
 
 message IsOnlineRequest {
