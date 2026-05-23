@@ -136,6 +136,20 @@ func runClient(myID, rawAddr, targetID string) error {
 		return fmt.Errorf("failed to send join: %w", err)
 	}
 
+	// Subscribe to the target's presence so we get ONLINE/OFFLINE updates on
+	// this stream. Skipped in broadcast mode where there is no single target.
+	if targetID != "*" {
+		sub := &pb.ChatMessage{
+			UserId:    myID,
+			To:        []string{targetID},
+			Type:      pb.MessageType_PRESENCE_SUBSCRIBE,
+			Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+		}
+		if err := stream.Send(sub); err != nil {
+			log.Printf("warning: failed to subscribe to presence for %s: %v", targetID, err)
+		}
+	}
+
 	go func() {
 		for {
 			in, err := stream.Recv()
@@ -143,7 +157,22 @@ func runClient(myID, rawAddr, targetID string) error {
 				log.Println("stream.Recv error:", err)
 				return
 			}
-			fmt.Printf("\n<< [%s] %s\n> ", in.UserId, in.Text)
+			switch in.Type {
+			case pb.MessageType_PRESENCE_ONLINE:
+				fmt.Printf("\n-- %s is online --\n> ", in.UserId)
+			case pb.MessageType_PRESENCE_OFFLINE:
+				if in.Text == "subscription_limit" {
+					fmt.Printf("\n-- subscription limit reached; cannot watch %s --\n> ", in.UserId)
+				} else {
+					fmt.Printf("\n-- %s is offline --\n> ", in.UserId)
+				}
+			case pb.MessageType_TYPING_START:
+				fmt.Printf("\n-- %s is typing... --\n> ", in.UserId)
+			// case pb.MessageType_TYPING_STOP:
+			// 	fmt.Printf("\n-- %s stopped typing --\n> ", in.UserId)
+			default:
+				fmt.Printf("\n<< [%s] %s\n> ", in.UserId, in.Text)
+			}
 		}
 	}()
 
@@ -163,12 +192,44 @@ func runClient(myID, rawAddr, targetID string) error {
 				Instead of reading one byte at a time from stdin, it grabs chunks into memory and lets you work line by line, string by string.
 	*/
 	fmt.Println("Type messages and press Enter. Ctrl+C to exit.")
+	// Typing indicator is a CLI heuristic: we emit TYPING_START right after
+	// drawing the prompt (we don't see keystrokes — stdin is line-buffered)
+	// and TYPING_STOP just before the MESSAGE goes out. Server-side TTL
+	// covers the "user walked away from prompt" case. Broadcast mode skips
+	// typing events entirely since there is no single recipient.
+	isDM := targetID != "*"
 	for {
+		if isDM {
+			startMsg := &pb.ChatMessage{
+				UserId:    myID,
+				To:        []string{targetID},
+				Type:      pb.MessageType_TYPING_START,
+				Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+			}
+			if err := stream.Send(startMsg); err != nil {
+				log.Println("typing_start send error:", err)
+				break
+			}
+		}
+
 		fmt.Print("> ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			log.Println("read error:", err)
 			break
+		}
+
+		if isDM {
+			stopMsg := &pb.ChatMessage{
+				UserId:    myID,
+				To:        []string{targetID},
+				Type:      pb.MessageType_TYPING_STOP,
+				Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+			}
+			if err := stream.Send(stopMsg); err != nil {
+				log.Println("typing_stop send error:", err)
+				break
+			}
 		}
 
 		toField := []string{targetID}

@@ -82,6 +82,15 @@ func GetRedisInstance() (*RedisClient, error) {
 	return redisClient, nil
 }
 
+// Client exposes the underlying go-redis client for callers that need pub/sub
+// or other primitives not surfaced by this wrapper. Returns nil if the
+// connection has not yet been initialised.
+func (r *RedisClient) Client() *redis.Client {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	return r.client
+}
+
 // AddMessageForUser adds a serialized message to the recipient's Redis list.
 func AddMessageForUser(msg RedisMessage) error {
 	rdb, err := GetRedisInstance()
