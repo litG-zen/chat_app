@@ -6,8 +6,15 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/go-redis/redis/v8"
+)
+
+const (
+	redisPingTimeout  = 5 * time.Second
+	redisWriteTimeout = 5 * time.Second
+	redisReadTimeout  = 10 * time.Second
 )
 
 var (
@@ -46,10 +53,10 @@ func (r *RedisClient) initialize() error {
 
 	r.client = redis.NewClient(opt)
 
-	// Test connection
-	_, err = r.client.Ping(r.ctx).Result()
-	if err != nil {
-		return fmt.Errorf("failed to connect to redis instance %v", err)
+	pingCtx, cancel := context.WithTimeout(r.ctx, redisPingTimeout)
+	defer cancel()
+	if _, err := r.client.Ping(pingCtx).Result(); err != nil {
+		return fmt.Errorf("failed to connect to redis instance: %w", err)
 	}
 
 	return nil
@@ -75,18 +82,23 @@ func GetRedisInstance() (*RedisClient, error) {
 	return redisClient, nil
 }
 
-// AddMessageForUser adds a serialized message to the recipient's Redis list
+// AddMessageForUser adds a serialized message to the recipient's Redis list.
 func AddMessageForUser(msg RedisMessage) error {
 	rdb, err := GetRedisInstance()
 	if err != nil {
-		return fmt.Errorf("Redis connection issue, please check %v", err)
+		return fmt.Errorf("redis connection issue: %w", err)
 	}
 	jsonMsg, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal message: %w", err)
 	}
+	ctx, cancel := context.WithTimeout(rdb.ctx, redisWriteTimeout)
+	defer cancel()
 	key := "undelivered:" + msg.Receiver
-	return rdb.client.RPush(rdb.ctx, key, jsonMsg).Err()
+	if err := rdb.client.RPush(ctx, key, jsonMsg).Err(); err != nil {
+		return fmt.Errorf("rpush %s: %w", key, err)
+	}
+	return nil
 }
 
 // FlushMessagesForUser fetches all undelivered messages for a user and deletes the list.
@@ -100,17 +112,29 @@ func FlushMessagesForUser(userID string) ([]RedisMessage, error) {
 		return nil, fmt.Errorf("redis client not initialized")
 	}
 
+	ctx, cancel := context.WithTimeout(rdb.ctx, redisReadTimeout)
+	defer cancel()
+
 	key := "undelivered:" + userID
 
-	// fetch all messages
-	msgsJson, err := rdb.client.LRange(rdb.ctx, key, 0, -1).Result()
-	if err != nil {
-		// If key does not exist, LRange returns nil slice and nil error, so we typically won't hit this,
-		// but handle any other redis errors here.
-		return nil, fmt.Errorf("failed to lrange key %s: %w", key, err)
+	// LRange + Del executed in a MULTI/EXEC transaction so messages can't be
+	// pushed between the read and the delete (any concurrent RPush after EXEC
+	// stays in the new list and is delivered next time).
+	var lrangeCmd *redis.StringSliceCmd
+	if _, err := rdb.client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		lrangeCmd = p.LRange(ctx, key, 0, -1)
+		p.Del(ctx, key)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("flush pipeline for %s: %w", key, err)
 	}
 
-	var msgs []RedisMessage
+	msgsJson, err := lrangeCmd.Result()
+	if err != nil {
+		return nil, fmt.Errorf("lrange %s: %w", key, err)
+	}
+
+	msgs := make([]RedisMessage, 0, len(msgsJson))
 	for _, m := range msgsJson {
 		var msg RedisMessage
 		if err := json.Unmarshal([]byte(m), &msg); err != nil {
@@ -118,12 +142,6 @@ func FlushMessagesForUser(userID string) ([]RedisMessage, error) {
 			continue
 		}
 		msgs = append(msgs, msg)
-	}
-
-	// delete the list atomically after reading
-	if err := rdb.client.Del(rdb.ctx, key).Err(); err != nil {
-		// we read the messages successfully — return them but also surface the delete error
-		return msgs, fmt.Errorf("fetched %d messages but failed to delete key %s: %w", len(msgs), key, err)
 	}
 
 	return msgs, nil

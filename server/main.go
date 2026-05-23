@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/litG-zen/chat_app/logs"
@@ -83,6 +87,19 @@ func (h *Hub) IsOnline(userID string) bool {
 	return ok
 }
 
+// CloseAll cancels every connected client's context and drains the registry.
+// Used on shutdown so active bidi streams can unwind instead of blocking
+// GracefulStop indefinitely.
+func (h *Hub) CloseAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for uid, c := range h.clients {
+		c.cancel()
+		close(c.send)
+		delete(h.clients, uid)
+	}
+}
+
 // deliver to specific users (non-blocking)
 func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 	h.mu.RLock()
@@ -102,9 +119,9 @@ func (h *Hub) SendTo(recipients []string, msg *pb.ChatMessage) {
 				Content:   msg.Text,
 				Timestamp: msg.Timestamp,
 			}
-			redis_write_err := utils.AddMessageForUser(message)
-			if redis_write_err != nil {
-				fmt.Errorf("Redis write error %v", redis_write_err)
+			if err := utils.AddMessageForUser(message); err != nil {
+				log.Printf("redis write error for %s: %v", uid, err)
+				logs.Logger(fmt.Sprintf("%v : redis write error for %s: %v", time.Now(), uid, err), true)
 			}
 		}
 	}
@@ -142,12 +159,7 @@ func GetServer() *Server {
 }
 
 func containsStar(recipients []string) bool {
-	for _, r := range recipients {
-		if r == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(recipients, "*")
 }
 
 func (s *Server) Chat(stream pb.ChatService_ChatServer) error {
@@ -291,13 +303,44 @@ func main() {
 		log.Fatalf("listen failed: %v", err)
 	}
 	grpcServer := grpc.NewServer() // add interceptors / TLS creds in production
-	pb.RegisterChatServiceServer(grpcServer, GetServer())
+	srv := GetServer()
+	pb.RegisterChatServiceServer(grpcServer, srv)
 	log.Println(SERVER_INIT_LOGO)
+	logs.Logger(fmt.Sprintf("%v : Server Bootup!", time.Now()), false)
 
-	log_string := fmt.Sprintf("%v : Server Bootup!", time.Now())
-	logs.Logger(log_string, false)
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- grpcServer.Serve(lis)
+	}()
 
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("serve failed: %v", err)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			log.Fatalf("serve failed: %v", err)
+		}
+	case sig := <-sigCh:
+		log.Printf("received %v, shutting down...", sig)
+		logs.Logger(fmt.Sprintf("%v : shutdown signal %v received", time.Now(), sig), false)
+
+		// Force-cancel client streams so handlers return, then let GracefulStop
+		// flush in-flight RPCs. Fall back to Stop() if it drags on.
+		srv.hub.CloseAll()
+
+		done := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			log.Println("server stopped gracefully")
+		case <-time.After(10 * time.Second):
+			log.Println("graceful stop timed out, forcing shutdown")
+			grpcServer.Stop()
+		}
 	}
 }

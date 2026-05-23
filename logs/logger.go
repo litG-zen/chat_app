@@ -2,6 +2,7 @@ package logs
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 )
@@ -52,35 +53,33 @@ func CloseLogFiles() {
 }
 
 func Logger(log_string string, isErr bool) {
-
-	// Takes the log string and write it into error.logs/access.logs based on isErr
+	// Takes the log string and writes it into error.log/access.log based on isErr.
 	log_dir := GetCurrentLogDir()
 
-	var log_file string
+	log_file := ACCESS_LOG_FILE
 	if isErr {
 		log_file = ERR_LOG_FILE
-	} else {
-		log_file = ACCESS_LOG_FILE
 	}
 
-	_, err := os.Stat(log_dir)
-	if err != nil {
-		os.Mkdir(log_dir, 0777)
+	// MkdirAll is a no-op if the directory exists and creates parents otherwise,
+	// so we don't need a separate Stat probe.
+	if err := os.MkdirAll(log_dir, 0o755); err != nil {
+		log.Printf("logger: cannot create log dir %s: %v", log_dir, err)
+		return
 	}
 
 	log_file_path := fmt.Sprintf("%v/%v", log_dir, log_file)
-	if _, err := os.Stat(log_file_path); err != nil {
-		// Log file does not exit, creating
-		os.Create(log_file_path)
-	}
 
-	// Write the log into the file in append-mode
-	// getting file-object by opening the file
-	f, err := os.OpenFile(log_file_path, os.O_APPEND, 0777)
+	// O_APPEND alone is read-only (RDONLY=0) and Fprintln silently fails on it —
+	// that's why earlier runs produced empty log files. We need WRONLY|APPEND|CREATE.
+	f, err := os.OpenFile(log_file_path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
-		panic(err)
+		log.Printf("logger: cannot open %s: %v", log_file_path, err)
+		return
 	}
+	defer f.Close()
 
-	fmt.Fprintln(f, log_string) // Note: Use Fprintln for appending in a newline.
-
+	if _, err := fmt.Fprintln(f, log_string); err != nil {
+		log.Printf("logger: write to %s failed: %v", log_file_path, err)
+	}
 }

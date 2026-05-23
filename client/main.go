@@ -20,7 +20,7 @@ import (
 // default gRPC port used when user doesn't provide one
 const defaultPort = "50051"
 
-// resolveAddr accepts many forms and returns an address suitable for grpc.Dial,
+// resolveAddr accepts many forms and returns an address suitable for grpc.NewClient,
 // a serverName for TLS verification (if any), and whether to use TLS.
 // Examples accepted:
 //
@@ -90,15 +90,17 @@ func runClient(myID, rawAddr, targetID string) error {
 		// Use system root CAs and verify serverName (SNI)
 		creds := credentials.NewClientTLSFromCert(nil, serverName)
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
-		log.Printf("Dialing %s with TLS (serverName=%s)", addr, serverName)
+		log.Printf("connecting to %s with TLS (serverName=%s)", addr, serverName)
 	} else {
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		log.Printf("Dialing %s without TLS (insecure)", addr)
+		log.Printf("connecting to %s without TLS (insecure)", addr)
 	}
 
-	conn, err := grpc.Dial(addr, dialOpts...)
+	// grpc.NewClient replaces the deprecated grpc.Dial. Connections are lazy by
+	// default — they’ll be established on the first RPC (IsOnline / Chat below).
+	conn, err := grpc.NewClient(addr, dialOpts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("grpc.NewClient(%q): %w", addr, err)
 	}
 	defer conn.Close()
 
