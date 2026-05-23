@@ -26,7 +26,7 @@ import (
 // or unhealthy Redis cannot block stream handlers or the heartbeat ticker.
 const presenceOpTimeout = 3 * time.Second
 
-const SERVER_INIT_LOGO = `-----LIT SERVER INITATTED----`
+const SERVER_INIT_LOGO = `-----LIT SERVER INITIATED----`
 
 // New client structure, with request-context and connection-steam variables.
 type Client struct {

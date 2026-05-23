@@ -168,8 +168,8 @@ func runClient(myID, rawAddr, targetID string) error {
 				}
 			case pb.MessageType_TYPING_START:
 				fmt.Printf("\n-- %s is typing... --\n> ", in.UserId)
-			case pb.MessageType_TYPING_STOP:
-				fmt.Printf("\n-- %s stopped typing --\n> ", in.UserId)
+			// case pb.MessageType_TYPING_STOP:
+			// 	fmt.Printf("\n-- %s stopped typing --\n> ", in.UserId)
 			default:
 				fmt.Printf("\n<< [%s] %s\n> ", in.UserId, in.Text)
 			}
